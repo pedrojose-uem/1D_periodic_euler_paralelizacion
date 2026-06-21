@@ -23,6 +23,11 @@ FLOATTYPE calcL2norm(DataStruct<FLOATTYPE> &u, DataStruct<FLOATTYPE> &uinit);
 
 int main(int narg, char **argv)
 {
+  MPI_Init(&narg, &argv);
+
+  int worldRank, worldSize;
+  MPI_Comm_rank(MPI_COMM_WORLD, &worldRank);
+  MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
   int numPoints =  80;
   FLOATTYPE k = 2.; // wave number
 
@@ -31,6 +36,7 @@ int main(int narg, char **argv)
     std::cout<< "Wrong number of arguments. You should include:" << std::endl;
     std::cout<< "    Num points" << std::endl;
     std::cout<< "    Wave number" << std::endl;
+    MPI_Finalize(); 
     return 1;
   }else
   {
@@ -103,11 +109,13 @@ int main(int narg, char **argv)
 
   // L2 norm
   FLOATTYPE err = calcL2norm(Uinit, u);
+if(worldRank == 0){
   std::cout << std::setprecision(4) << "Comp. time: " << compTime;
   std::cout << " sec. Error: " << err/k;
   std::cout << " kdx: " << k*datax[1]*2.*M_PI;
   std::cout << std::endl;
-
+}
+  MPI_Finalize();
   return 0;
 }
 
