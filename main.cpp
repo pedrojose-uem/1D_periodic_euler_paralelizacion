@@ -148,19 +148,39 @@ MPI_Reduce(
   write2File(xj, u, fileName);
 
   // L2 norm
-  FLOATTYPE err = calcL2norm(Uinit, u);
+// L2 norm
+FLOATTYPE localErr = calcL2norm(Uinit, u);
+FLOATTYPE localErrSquared = localErr * localErr;
+FLOATTYPE globalErrSquared = 0.0;
+
+MPI_Reduce(
+    &localErrSquared,
+    &globalErrSquared,
+    1,
+#ifdef _DOUBLE_
+    MPI_DOUBLE,
+#else
+    MPI_FLOAT,
+#endif
+    MPI_SUM,
+    0,
+    MPI_COMM_WORLD
+);
+
+FLOATTYPE globalErr = sqrt(globalErrSquared);
+
 if(worldRank == 0){
   std::cout << std::setprecision(6);
   std::cout << "Processes: " << worldSize;
   std::cout << " Comp. time: " << globalCompTime;
-  std::cout << " sec. Error: " << err/k;
+  std::cout << " sec. Error: " << globalErr/k;
   std::cout << " kdx: " << k*dxGlobal*2.*M_PI;
   std::cout << std::endl;
 }
-  MPI_Finalize();
-  return 0;
-}
+MPI_Finalize();
 
+return 0;
+}
 
 // ==================================================================
 // AUXILIARY FUNCTIONS
