@@ -36,6 +36,7 @@ private:
   FluxFunction<T> &F;
 
   void evalRHS(DataStruct<T> &Uin);
+  void evalRHS(DataStruct<T> &Uin, T ghostLeft, T ghostRight);
 
 public:
   Central1D(DataStruct<T> &_U, DataStruct<T> &_mesh, FluxFunction<T> &_F);
@@ -43,7 +44,7 @@ public:
 
   virtual void eval();
   virtual void eval(DataStruct<T> &Uin);
-
+  void eval(DataStruct<T> &Uin, T ghostLeft, T ghostRight);
   virtual DataStruct<T>& ref2RHS();
 
 };

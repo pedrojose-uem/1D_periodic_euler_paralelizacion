@@ -19,7 +19,13 @@
 // declare supporting functions
 void write2File(DataStruct<FLOATTYPE> &X, DataStruct<FLOATTYPE> &U, std::string name);
 FLOATTYPE calcL2norm(DataStruct<FLOATTYPE> &u, DataStruct<FLOATTYPE> &uinit);
-
+void updateGhosts(
+    DataStruct<FLOATTYPE> &U,
+    FLOATTYPE &ghostLeft,
+    FLOATTYPE &ghostRight,
+    int worldRank,
+    int worldSize
+);
 
 int main(int narg, char **argv)
 {
@@ -43,10 +49,29 @@ int main(int narg, char **argv)
     numPoints = std::stoi(argv[1]);
     k         = std::stod(argv[2]);
   }
+    int baseLocalSize = numPoints / worldSize;
+    int remainder = numPoints % worldSize;
 
+    int localNumPoints = baseLocalSize;
+
+    if(worldRank == worldSize - 1) {
+        localNumPoints += remainder;
+    }
+
+    int globalStart = worldRank * baseLocalSize; 
+/*
+  std::cout << "Rank " << worldRank
+          << " de " << worldSize
+          << " tiene " << localNumPoints
+          << " puntos y empieza en " << globalStart
+          << std::endl;
+*/
   // solution data
-  DataStruct<FLOATTYPE> u(numPoints), f(numPoints), xj(numPoints);
-
+  DataStruct<FLOATTYPE> u(localNumPoints);
+  DataStruct<FLOATTYPE> f(localNumPoints);
+  DataStruct<FLOATTYPE> xj(localNumPoints);
+  FLOATTYPE ghostLeft = 0.0;
+  FLOATTYPE ghostRight = 0.0;
   // flux function
   LinearFlux<FLOATTYPE> lf;
 
@@ -55,15 +80,16 @@ int main(int narg, char **argv)
 
   // Initial Condition
   FLOATTYPE *datax = xj.getData();
-  FLOATTYPE *dataU = u.getData();
-  for(int j = 0; j < numPoints; j++)
-  {
-    // xj
-    datax[j] = FLOATTYPE(j)/FLOATTYPE(numPoints-1);
+FLOATTYPE *dataU = u.getData();
 
-    // init Uj
-    dataU[j] = sin(k*2. * M_PI * datax[j]);
-  }
+for(int j = 0; j < localNumPoints; j++) {
+
+    int globalIndex = globalStart + j;
+
+    datax[j] = FLOATTYPE(globalIndex) / FLOATTYPE(numPoints);
+
+    dataU[j] = sin(k * 2.0 * M_PI * datax[j]);
+}
 
   DataStruct<FLOATTYPE> Uinit;
   Uinit = u;
@@ -72,7 +98,8 @@ int main(int narg, char **argv)
   Central1D<FLOATTYPE> rhs(u,xj,lf);
 
   FLOATTYPE CFL = 2.4;
-  FLOATTYPE dt = CFL*datax[1];
+FLOATTYPE dxGlobal = 1.0 / FLOATTYPE(numPoints);
+FLOATTYPE dt = CFL * dxGlobal;
 
   // Output Initial Condition
   write2File(xj, u, "initialCondition.csv");
@@ -95,24 +122,39 @@ int main(int narg, char **argv)
     {
       rk.stepUi(dt);
       Ui = *rk.currentU();
-      rhs.eval(Ui);
+      updateGhosts(Ui, ghostLeft, ghostRight, worldRank, worldSize);
+      rhs.eval(Ui, ghostLeft, ghostRight);
       rk.setFi(rhs.ref2RHS());
     }
     rk.finalizeRK(dt);
     time += dt;
   }
 
-  // finishe timer
-  compTime = MPI_Wtime() - compTime;
+  // finisher timer
+  double localCompTime = MPI_Wtime() - compTime;
+double globalCompTime = 0.0;
 
-  write2File(xj, u, "final.csv");
+MPI_Reduce(
+    &localCompTime,
+    &globalCompTime,
+    1,
+    MPI_DOUBLE,
+    MPI_MAX,
+    0,
+    MPI_COMM_WORLD
+);
+
+  std::string fileName = "final_rank_" + std::to_string(worldRank) + ".csv";
+  write2File(xj, u, fileName);
 
   // L2 norm
   FLOATTYPE err = calcL2norm(Uinit, u);
 if(worldRank == 0){
-  std::cout << std::setprecision(4) << "Comp. time: " << compTime;
+  std::cout << std::setprecision(6);
+  std::cout << "Processes: " << worldSize;
+  std::cout << " Comp. time: " << globalCompTime;
   std::cout << " sec. Error: " << err/k;
-  std::cout << " kdx: " << k*datax[1]*2.*M_PI;
+  std::cout << " kdx: " << k*dxGlobal*2.*M_PI;
   std::cout << std::endl;
 }
   MPI_Finalize();
@@ -153,4 +195,83 @@ FLOATTYPE calcL2norm(DataStruct<FLOATTYPE> &u, DataStruct<FLOATTYPE> &uinit)
   }
 
   return sqrt( err );
+}
+void updateGhosts(
+    DataStruct<FLOATTYPE> &U,
+    FLOATTYPE &ghostLeft,
+    FLOATTYPE &ghostRight,
+    int worldRank,
+    int worldSize
+) {
+    FLOATTYPE *dataU = U.getData();
+
+    int localSize = U.getSize();
+
+    int leftRank = (worldRank - 1 + worldSize) % worldSize;
+    int rightRank = (worldRank + 1) % worldSize;
+
+#ifdef _DOUBLE_
+    MPI_Datatype mpiFloatType = MPI_DOUBLE;
+#else
+    MPI_Datatype mpiFloatType = MPI_FLOAT;
+#endif
+
+    MPI_Request requests[4];
+
+    /*
+      ghostLeft recibe el último valor del proceso izquierdo.
+      ghostRight recibe el primer valor del proceso derecho.
+    */
+
+    MPI_Irecv(
+        &ghostLeft,
+        1,
+        mpiFloatType,
+        leftRank,
+        100,
+        MPI_COMM_WORLD,
+        &requests[0]
+    );
+
+    MPI_Irecv(
+        &ghostRight,
+        1,
+        mpiFloatType,
+        rightRank,
+        200,
+        MPI_COMM_WORLD,
+        &requests[1]
+    );
+
+    /*
+      Envío mi primer punto al proceso izquierdo,
+      porque para él será su ghostRight.
+    */
+
+    MPI_Isend(
+        &dataU[0],
+        1,
+        mpiFloatType,
+        leftRank,
+        200,
+        MPI_COMM_WORLD,
+        &requests[2]
+    );
+
+    /*
+      Envío mi último punto al proceso derecho,
+      porque para él será su ghostLeft.
+    */
+
+    MPI_Isend(
+        &dataU[localSize - 1],
+        1,
+        mpiFloatType,
+        rightRank,
+        100,
+        MPI_COMM_WORLD,
+        &requests[3]
+    );
+
+    MPI_Waitall(4, requests, MPI_STATUSES_IGNORE);
 }

@@ -56,7 +56,44 @@ void Central1D<T>::evalRHS(DataStruct<T> &Uin)
 
   dataRHS[len-1] = dataRHS[0];
 }
+template<class T>
+void Central1D<T>::evalRHS(
+    DataStruct<T> &Uin,
+    T ghostLeft,
+    T ghostRight
+) {
+    T *dataRHS = RHS.getData();
 
+    const T *dataU = Uin.getData();
+    const T *dataMesh = mesh.getData();
+
+    const int len = Uin.getSize();
+
+    T h = dataMesh[1] - dataMesh[0];
+    T dx = 2.0 * h;
+
+    for(int j = 0; j < len; j++) {
+
+        T uLeft;
+        T uRight;
+
+        if(j == 0) {
+            uLeft = ghostLeft;
+        } else {
+            uLeft = dataU[j - 1];
+        }
+
+        if(j == len - 1) {
+            uRight = ghostRight;
+        } else {
+            uRight = dataU[j + 1];
+        }
+
+        dataRHS[j] = -(
+            F.computeFlux(uRight) - F.computeFlux(uLeft)
+        ) / dx;
+    }
+}
 template<class T>
 void Central1D<T>::eval()
 {
@@ -67,6 +104,14 @@ template<class T>
 void Central1D<T>::eval(DataStruct<T> &Uin)
 {
   evalRHS(Uin);
+}
+template<class T>
+void Central1D<T>::eval(
+    DataStruct<T> &Uin,
+    T ghostLeft,
+    T ghostRight
+) {
+    evalRHS(Uin, ghostLeft, ghostRight);
 }
 
 template<class T>
